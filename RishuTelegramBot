@@ -14,6 +14,24 @@ from telegram.ext import (
 )
 from telegram.constants import ParseMode
 
+from flask import Flask
+from threading import Thread
+
+app_web = Flask('')
+
+@app_web.route('/')
+def home():
+    return "Bot is alive"
+
+def run_web():
+    app_web.run(host='0.0.0.0', port=10000)
+
+def keep_alive():
+    t = Thread(target=run_web)
+    t.start()
+
+logging.basicConfig(level=logging.INFO)
+
 logging.basicConfig(level=logging.INFO)
 
 TRADER_ID, ASSET_SELECTION, NUMBER_OF_SIGNALS, CONFIRM_GENERATE, SELECT_TYPE, LIVE_CONFIRM, ASK_TIMEZONE = range(7)
@@ -484,8 +502,16 @@ def main():
 
     logging.info("🚀 Bot is now running and ready to serve signals...")
 
-    # Run bot
-    app.run_polling()
+keep_alive()
+   
+   # Run bot forever
+while True:
+    try:
+        logging.info("🚀 Bot started...")
+        app.run_polling(drop_pending_updates=True)
+
+    except Exception as e:
+        logging.error(f"Bot crashed: {e}")
 
 
 if __name__ == "__main__":
