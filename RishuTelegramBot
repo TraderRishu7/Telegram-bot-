@@ -463,14 +463,11 @@ def main():
     import os
     from telegram.error import NetworkError
 
-    # Remove proxy vars
     os.environ.pop("HTTP_PROXY", None)
     os.environ.pop("HTTPS_PROXY", None)
 
-    # Create bot app
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    # Error handler
     async def error_handler(update, context):
         try:
             raise context.error
@@ -481,7 +478,6 @@ def main():
 
     app.add_error_handler(error_handler)
 
-    # Conversation handler
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
         states={
@@ -502,16 +498,15 @@ def main():
 
     logging.info("🚀 Bot is now running and ready to serve signals...")
 
-keep_alive()
-   
-   # Run bot forever
-while True:
-    try:
-        logging.info("🚀 Bot started...")
-        app.run_polling(drop_pending_updates=True)
+    keep_alive()
 
-    except Exception as e:
-        logging.error(f"Bot crashed: {e}")
+    while True:
+        try:
+            logging.info("🚀 Bot started...")
+            app.run_polling(drop_pending_updates=True)
+
+        except Exception as e:
+            logging.error(f"Bot crashed: {e}")
 
 
 if __name__ == "__main__":
