@@ -498,10 +498,10 @@ def main():
 
     logging.info("🚀 Bot is now running and ready to serve signals...")
 
-keep_alive()
+    keep_alive()
 
-logging.info("🚀 Bot started...")
-app.run_polling(drop_pending_updates=True)
+    logging.info("🚀 Bot started...")
+    app.run_polling(drop_pending_updates=True)
 
 
 if __name__ == "__main__":
