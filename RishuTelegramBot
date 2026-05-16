@@ -1,0 +1,492 @@
+# 👑 RishuTelegramBot — OTC Market Only + Quotex Trader ID Verification 👑
+import json
+import random
+from datetime import datetime, timedelta, timezone
+import asyncio
+import logging
+import httpx
+from telegram import (
+    Update, InlineKeyboardMarkup, InlineKeyboardButton
+)
+from telegram.ext import (
+    ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes,
+    ConversationHandler, MessageHandler, filters
+)
+from telegram.constants import ParseMode
+
+logging.basicConfig(level=logging.INFO)
+
+TRADER_ID, ASSET_SELECTION, NUMBER_OF_SIGNALS, CONFIRM_GENERATE, SELECT_TYPE, LIVE_CONFIRM, ASK_TIMEZONE = range(7)
+
+BOT_TOKEN = "7564164721:AAFJM2r0VEQB0DGe8ZC0gdBqQJ70D8GUxO0"
+
+OTC_ASSETS = [
+    "USDDZD-OTC", "USDPKR-OTC", "USDZAR-OTC", "BRLUSD-OTC", "USDIDR-OTC",
+    "NZDJPY-OTC", "USDMXN-OTC", "USDINR-OTC", "USDBDT-OTC", "USDCOP-OTC",
+    "USDEGP-OTC", "USDPHP-OTC", "USDTRY-OTC", "EURNZD-OTC", "USDNGN-OTC",
+    "NZDUSD-OTC", "NZDCHF-OTC", "CADCHF-OTC", "USDARS-OTC", "CADJPY-OTC",
+    "FACEBOOK-OTC", "INTEL-OTC", "MICROSOFT-OTC", "NZDCAD-OTC"
+]
+DIRECTIONS = ["CALL", "PUT"]
+
+def get_timezone_from_offset(offset_str):
+    sign = -1 if "-" in offset_str else 1
+    hours, minutes = map(int, offset_str.replace("+", "").replace("-", "").split(":"))
+    return timezone(timedelta(hours=sign * hours, minutes=sign * minutes))
+
+# --- Trader ID Verification ---
+async def verify_trader_id(trader_id):
+    try:
+        url = "https://raw.githubusercontent.com/TraderRishu7/credentials-Rishu/main/key.json"
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url)
+            data = response.json()
+
+        if trader_id in data.get("live_keys", []):
+            return "live"
+        if trader_id in data.get("future_keys", []):
+            return "future"
+        if trader_id in data.get("master_keys", []):
+            return "master"
+    except Exception as e:
+        logging.error(f"Error verifying trader ID: {e}")
+    return None
+
+# --- Conversation Flow ---
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Always reset everything before restarting
+    context.user_data.clear()
+    welcome_message = (
+        "👑 *RISHU QUOTEX BOT* 👑\n\n"
+        "💹 Generate accurate live & future OTC signals instantly.\n\n"
+        "💬 Please enter your *Quotex Trader ID* to begin:"
+    )
+    await update.message.reply_text(welcome_message, parse_mode="Markdown")
+    return TRADER_ID
+
+async def ask_trader_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    trader_id = update.message.text.strip()
+    trader_type = await verify_trader_id(trader_id)
+
+    if trader_type is None:
+        affiliate_link = "https://broker-qx.pro/sign-up/?lid=518903"  # 🔗 replace with your actual affiliate link
+        error_message = (
+            "❌ *Invalid Quotex Trader ID!*\n\n"
+            "Your ID isn’t registered in our system.\n"
+            "Make sure your account is created under our official link 👇\n"
+            f"{affiliate_link}\n\n"
+            "💰 *After creating your account:*\n\n"
+            "1️⃣ Deposit at least *$20*\n"
+            "2️⃣ Send your *Trader ID* to [@RishuSupport](https://t.me/PvttRishu)"
+        )
+        await update.message.reply_text(error_message, parse_mode="Markdown", disable_web_page_preview=True)
+        return TRADER_ID
+
+    context.user_data["trader_id"] = trader_id
+    context.user_data["trader_type"] = trader_type
+
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📈 Live Signals", callback_data="live")],
+        [InlineKeyboardButton("⏳ Future Signals", callback_data="future")],
+    ])
+    await update.message.reply_text(
+        f"✅ *Trader ID Verified Successfully!*\n\n💠 Access Type: *{trader_type.upper()}*",
+        reply_markup=keyboard,
+        parse_mode="Markdown"
+    )
+    return SELECT_TYPE
+
+async def handle_signal_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    selected_type = query.data
+    trader_type = context.user_data.get("trader_type")
+
+    if trader_type == "live" and selected_type == "future":
+        await context.bot.send_message(
+            chat_id=query.message.chat_id,
+            text="🚫 You have a *LIVE* Trader ID and cannot access Future Signals.",
+            parse_mode="Markdown"
+        )
+        return SELECT_TYPE
+    elif trader_type == "future" and selected_type == "live":
+        await context.bot.send_message(
+            chat_id=query.message.chat_id,
+            text="🚫 You have a *FUTURE* Trader ID and cannot access Live Signals.",
+            parse_mode="Markdown"
+        )
+        return SELECT_TYPE
+
+    context.user_data["selected_type"] = selected_type
+
+    if selected_type == "live":
+        # Directly show Live Mode intro + timezone prompt
+        await context.bot.send_message(
+            chat_id=query.message.chat_id,
+            text=(
+                "📈 *Live Signals Mode Selected!*\n\n"
+                "🌐 Please enter your timezone offset (e.g. +05:30 or -04:00):"
+            ),
+            parse_mode="Markdown"
+        )
+        return ASK_TIMEZONE
+    else:
+        # For future mode, ask for timezone normally
+        await context.bot.send_message(
+            chat_id=query.message.chat_id,
+            text="🌐 Please enter your timezone offset (e.g. +05:30 or -04:00):",
+            parse_mode="Markdown"
+        )
+        return ASK_TIMEZONE
+
+
+async def handle_timezone_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    if not text.startswith(('+', '-')) or ':' not in text:
+        await update.message.reply_text("❌ Invalid format. Please enter timezone like +05:30 or -04:00")
+        return ASK_TIMEZONE
+
+    context.user_data["timezone_offset"] = text
+
+    selected_type = context.user_data.get("selected_type")
+    if selected_type == "live":
+        # Merge timezone confirmation into live mode start message
+        tz_msg = f"✅ Timezone set to *UTC{text}*\n\nPress 'Generate Signals' to get your first live signal."
+        tz_msg_full = "📈 *Live Signals Mode Ready!*\n\n" + tz_msg
+
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("Generate Signals", callback_data="generate_live")],
+            [InlineKeyboardButton("Cancel", callback_data="cancel_live")]
+        ])
+
+        await update.message.reply_text(tz_msg_full, parse_mode="Markdown", reply_markup=keyboard)
+        context.user_data["timeframe"] = "1"
+        context.user_data["live_mode_active"] = True
+        return LIVE_CONFIRM
+
+    else:
+        # Future mode — same flow as before
+        await update.message.reply_text(f"✅ Timezone set to UTC{text}")
+        await update.message.reply_text(
+            "💬 Please enter one or more *OTC assets*, separated by commas (e.g. `USDBDT-OTC, USDINR-OTC`):",
+            parse_mode="Markdown"
+        )
+        return ASSET_SELECTION
+
+# --- Live Mode ---
+def escape_md(text: str) -> str:
+    escape_chars = r"\_*[]()~`>#+-=|{}.!%"
+    return ''.join(f'\\{c}' if c in escape_chars else c for c in text)
+
+async def proceed_with_live(update_or_query, context):
+    tz = get_timezone_from_offset(context.user_data["timezone_offset"])
+    now = datetime.now(tz)
+    context.user_data["timeframe"] = "1"
+    context.user_data["live_mode_active"] = True
+
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("Generate Signals", callback_data="generate_live")],
+        [InlineKeyboardButton("Cancel", callback_data="cancel_live")]
+    ])
+
+    await context.bot.send_message(
+        update_or_query.effective_chat.id,
+        "📈 *Live Signals Mode Selected!*\n\nPress 'Generate Signals' to get your first live signal.",
+        reply_markup=keyboard,
+        parse_mode="Markdown"
+    )
+    return LIVE_CONFIRM
+
+async def handle_live_actions(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    chat_id = query.message.chat_id
+
+    if query.data == "cancel_live":
+        await query.message.edit_text("🚫 Live session ended. Use /start to restart.")
+        context.user_data["live_mode_active"] = False
+        context.user_data["signal_running"] = False
+        return ConversationHandler.END
+
+    if query.data in ("generate_live", "next_live_signal"):
+        # Prevent if a trade is already active
+        if context.user_data.get("signal_running", False):
+            await query.message.reply_text("⚠️ Please wait until the current trade is completed before generating another signal.")
+            return LIVE_CONFIRM
+
+        if not context.user_data.get("live_mode_active", False):
+            await query.message.reply_text("❌ You are not in Live Mode. Use /start to begin again.")
+            return ConversationHandler.END
+
+        # Disable the "Generate Signals" button while trade is active
+        try:
+            await query.message.edit_reply_markup(
+                InlineKeyboardMarkup([
+                    [InlineKeyboardButton("⏳ Waiting for trade...", callback_data="disabled")],
+                    [InlineKeyboardButton("Cancel", callback_data="cancel_live")]
+                ])
+            )
+        except Exception as e:
+            logging.warning(f"Failed to disable button: {e}")
+
+        await send_single_live_signal(context, chat_id)
+        return LIVE_CONFIRM
+
+
+
+async def send_single_live_signal(context, chat_id):
+    # Prevent generating multiple signals at once
+    if context.user_data.get("signal_running", False):
+        await context.bot.send_message(chat_id=chat_id, text="⚠️ Please wait for the current trade to complete before generating the next signal.")
+        return
+
+    context.user_data["signal_running"] = True  # mark signal as active
+
+    tz = get_timezone_from_offset(context.user_data["timezone_offset"])
+    now = datetime.now(tz).replace(microsecond=0)
+
+    # Align to next full minute entry
+    entry_time = (now + timedelta(minutes=1)).replace(second=0)
+
+    # If already past entry_time - 30s, shift to next minute
+    if now >= entry_time - timedelta(seconds=30):
+        entry_time = entry_time + timedelta(minutes=1)
+
+    send_time = entry_time - timedelta(seconds=30)
+    exit_time = entry_time + timedelta(minutes=1, seconds=5)
+
+    wait_seconds = (send_time - now).total_seconds()
+    if wait_seconds > 0:
+        await asyncio.sleep(wait_seconds)
+
+    asset = random.choice(OTC_ASSETS)
+    direction = random.choice(DIRECTIONS)
+    accuracy = random.randint(83, 98)
+
+    msg = (
+        "*👑 RISHU QUOTEX OTC 👑*\n\n"
+        f"*📌 Asset:* {escape_md(asset)}\n"
+        f"*⌛️ Entry Time:* {escape_md(entry_time.strftime('%H:%M:%S'))}\n"
+        f"*⚔️ Direction:* {escape_md(direction)}\n"
+        f"*⏰ Timeframe:* {escape_md('1 Minute')}\n"
+        f"*🌟 Accuracy:* {escape_md(str(accuracy))}%\n\n"
+        "*💲Follow Proper Money Management*"
+    )
+
+    await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode=ParseMode.MARKDOWN_V2)
+
+    # Schedule trade completion
+    asyncio.create_task(send_trade_complete_message(context, chat_id, exit_time))
+
+
+async def send_trade_complete_message(context, chat_id, exit_time):
+    tz = get_timezone_from_offset(context.user_data["timezone_offset"])
+    wait_seconds = (exit_time - datetime.now(tz)).total_seconds()
+
+    try:
+        if wait_seconds > 0:
+            await asyncio.sleep(wait_seconds)
+    except asyncio.CancelledError:
+        logging.info("Trade completion cancelled before message.")
+        context.user_data["signal_running"] = False
+        return
+
+    # Skip if not active
+    if not context.user_data.get("live_mode_active", False):
+        logging.info("Live mode inactive, skipping trade complete message.")
+        context.user_data["signal_running"] = False
+        return
+
+    # Mark signal finished
+    context.user_data["signal_running"] = False
+
+    # ✅ Send only trade completion message (no buttons)
+    await context.bot.send_message(
+        chat_id=chat_id,
+        text="✅ *Trade successfully completed!*\nType /nextsignal to generate a new one.",
+        parse_mode="Markdown"
+    )
+
+
+# --- Command for manual /nextsignal ---
+async def next_signal(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.user_data.get("live_mode_active", False):
+        await update.message.reply_text("❌ You are not in Live Mode. Use /start to begin again.")
+        return ConversationHandler.END
+
+    # Prevent new signal until current one completes
+    if context.user_data.get("signal_running", False):
+        await update.message.reply_text("⚠️ Please wait for the current trade to complete before generating the next signal.")
+        return ConversationHandler.END
+
+    await send_single_live_signal(context, update.message.chat_id)
+    return ConversationHandler.END
+
+
+# --- Future Mode (unchanged) ---
+async def select_asset(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    input_text = update.message.text.strip().upper()
+
+    # Split user input
+    entered_assets = [a.strip().upper() for a in input_text.split(",") if a.strip()]
+
+    valid_assets = []
+    invalid_assets = []
+
+    for a in entered_assets:
+        if a in OTC_ASSETS:
+            valid_assets.append(a)
+        else:
+            invalid_assets.append(a)
+
+    if not valid_assets:
+        await update.message.reply_text(
+            "❌ No valid assets found.\n\n"
+            "Please enter assets like:\n`USDBDT-OTC, USDINR-OTC`",
+            parse_mode="Markdown"
+        )
+        return ASSET_SELECTION
+
+    # If some assets were invalid → show a warning
+    if invalid_assets:
+        await update.message.reply_text(
+            "⚠️ Some assets were ignored:\n" +
+            "\n".join([f"• `{a}`" for a in invalid_assets]) +
+            "\n\n✔ Using only valid assets.",
+            parse_mode="Markdown"
+        )
+
+    context.user_data["selected_assets"] = valid_assets
+
+    asset_list = "\n".join([f"• `{a}`" for a in valid_assets])
+    await update.message.reply_text(
+        f"✅ Selected assets:\n\n{asset_list}\n\n"
+        "💬 How many total signals do you want to generate?",
+        parse_mode="Markdown"
+    )
+    return NUMBER_OF_SIGNALS
+
+async def ask_signal_count(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    count_text = update.message.text.strip()
+    if not count_text.isdigit() or int(count_text) <= 0:
+        await update.message.reply_text("❌ Please enter a valid number greater than 0.")
+        return NUMBER_OF_SIGNALS
+
+    context.user_data["signal_count"] = int(count_text)
+    await update.message.reply_text(
+        f"✅ Generating *{count_text}* signals.\n\nType `yes` to confirm or `no` to cancel:",
+        parse_mode="Markdown"
+    )
+    return CONFIRM_GENERATE
+
+async def confirm_generation(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    response = update.message.text.strip().lower()
+    if response == "yes":
+        assets = context.user_data.get("selected_assets")
+        count = context.user_data.get("signal_count")
+        await update.message.reply_text("✅ Signals confirmed. Generating...")
+        asyncio.create_task(send_future_signals_list(context, update.message.chat_id, assets, count))
+        return ConversationHandler.END
+    elif response == "no":
+        await update.message.reply_text("❌ Signal generation cancelled. Use /start to begin again.")
+        return ConversationHandler.END
+    else:
+        await update.message.reply_text("Please type `yes` or `no`.")
+        return CONFIRM_GENERATE
+
+async def send_future_signals_list(context, chat_id, assets, count):
+    tz = get_timezone_from_offset(context.user_data["timezone_offset"])
+    now = datetime.now(tz).replace(second=0, microsecond=0)
+    base_time = now
+    signals = []
+    last_direction = None
+    same_count = 0
+
+    for _ in range(count):
+        base_time += timedelta(minutes=random.randint(4, 15))
+        time_str = base_time.strftime("%H:%M")
+        direction = random.choice(DIRECTIONS)
+
+        if direction == last_direction:
+            same_count += 1
+        else:
+            same_count = 0
+        if same_count >= 3:
+            direction = "CALL" if direction == "PUT" else "PUT"
+            same_count = 0
+
+        last_direction = direction
+        asset = random.choice(assets)
+        signals.append(f"`M1 {asset} {time_str} {direction}`")
+
+    await context.bot.send_message(chat_id=chat_id, text="\n".join(signals), parse_mode="Markdown")
+
+# --- Cancel Command ---
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["live_mode_active"] = False
+
+    # Cancel any running tasks cleanly
+    for key in ["live_signal_task", "trade_complete_task"]:
+        task = context.user_data.get(key)
+        if task and not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                logging.info(f"Cancelled task: {key}")
+
+    await update.message.reply_text("❌ All processes stopped. You can use /start to restart.")
+    return ConversationHandler.END
+
+
+# --- Main Function ---
+# --- Main Function ---
+async def main():
+    import os
+    from telegram.error import NetworkError
+
+    # 🧱 Ensure no unwanted proxy interferes
+    os.environ.pop("HTTP_PROXY", None)
+    os.environ.pop("HTTPS_PROXY", None)
+
+    # ✅ Initialize application
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
+
+    # ✅ Add a global error handler for Telegram network issues
+    async def error_handler(update, context):
+        try:
+            raise context.error
+        except NetworkError as e:
+            logging.warning(f"[⚠️ NetworkError] Telegram connection issue: {e}")
+        except Exception as e:
+            logging.error(f"[❌ Unexpected Error] {e}", exc_info=True)
+
+    app.add_error_handler(error_handler)
+
+    # ✅ Define all handlers as before
+    conv_handler = ConversationHandler(
+        entry_points=[CommandHandler("start", start)],
+        states={
+            TRADER_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_trader_id)],
+            SELECT_TYPE: [CallbackQueryHandler(handle_signal_type)],
+            ASK_TIMEZONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_timezone_input)],
+            ASSET_SELECTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, select_asset)],
+            NUMBER_OF_SIGNALS: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_signal_count)],
+            CONFIRM_GENERATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, confirm_generation)],
+            LIVE_CONFIRM: [CallbackQueryHandler(handle_live_actions)],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)]
+    )
+
+    app.add_handler(conv_handler)
+    app.add_handler(CommandHandler("nextsignal", next_signal))
+    app.add_handler(CommandHandler("cancel", cancel))
+
+    logging.info("🚀 Bot is now running and ready to serve signals...")
+    await app.run_polling()
+
+if __name__ == "__main__":
+    import nest_asyncio
+    nest_asyncio.apply()
+    asyncio.run(main())
