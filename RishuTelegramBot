@@ -441,30 +441,29 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # --- Main Function ---
-# --- Main Function ---
-async def main():
+def main():
     import os
     from telegram.error import NetworkError
 
-    # 🧱 Ensure no unwanted proxy interferes
+    # Remove proxy vars
     os.environ.pop("HTTP_PROXY", None)
     os.environ.pop("HTTPS_PROXY", None)
 
-    # ✅ Initialize application
+    # Create bot app
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    # ✅ Add a global error handler for Telegram network issues
+    # Error handler
     async def error_handler(update, context):
         try:
             raise context.error
         except NetworkError as e:
-            logging.warning(f"[⚠️ NetworkError] Telegram connection issue: {e}")
+            logging.warning(f"[⚠️ NetworkError] {e}")
         except Exception as e:
             logging.error(f"[❌ Unexpected Error] {e}", exc_info=True)
 
     app.add_error_handler(error_handler)
 
-    # ✅ Define all handlers as before
+    # Conversation handler
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
         states={
@@ -484,7 +483,10 @@ async def main():
     app.add_handler(CommandHandler("cancel", cancel))
 
     logging.info("🚀 Bot is now running and ready to serve signals...")
-    await app.run_polling()
+
+    # Run bot
+    app.run_polling()
+
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
