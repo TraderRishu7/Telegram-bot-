@@ -32,8 +32,6 @@ def keep_alive():
 
 logging.basicConfig(level=logging.INFO)
 
-logging.basicConfig(level=logging.INFO)
-
 TRADER_ID, ASSET_SELECTION, NUMBER_OF_SIGNALS, CONFIRM_GENERATE, SELECT_TYPE, LIVE_CONFIRM, ASK_TIMEZONE = range(7)
 
 BOT_TOKEN = "7564164721:AAFJM2r0VEQB0DGe8ZC0gdBqQJ70D8GUxO0"
@@ -459,6 +457,7 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # --- Main Function ---
+# --- Main Function ---
 def main():
     import os
     from telegram.error import NetworkError
@@ -496,13 +495,15 @@ def main():
     app.add_handler(CommandHandler("nextsignal", next_signal))
     app.add_handler(CommandHandler("cancel", cancel))
 
-    logging.info("🚀 Bot is now running and ready to serve signals...")
-
     keep_alive()
 
     logging.info("🚀 Bot started...")
-    app.run_polling(drop_pending_updates=True)
+    print("BOT POLLING STARTED")
 
+    app.run_polling(
+        drop_pending_updates=True,
+        allowed_updates=Update.ALL_TYPES
+    )
 
 if __name__ == "__main__":
     main()
