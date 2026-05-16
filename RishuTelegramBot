@@ -506,4 +506,8 @@ def main():
     )
 
 if __name__ == "__main__":
+    print("STARTING BOT FILE")
+
+    keep_alive()
+
     main()
